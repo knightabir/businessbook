@@ -40,7 +40,7 @@ export default function LoginPage() {
         setError(response.error)
       } else {
         // Redirect to dashboard or home page after successful login
-        router.push("/dashboard")
+        window.location.href = "/dashboard"
       }
     } catch (err) {
       setLoading(false)
