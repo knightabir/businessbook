@@ -33,6 +33,11 @@ interface CustomSession extends Session {
   };
 }
 
+// Define cookie settings for different environments
+const useSecureCookies = process.env.NEXTAUTH_URL?.startsWith('https://') ?? false;
+const cookiePrefix = useSecureCookies ? '__Secure-' : '';
+const hostName = new URL(process.env.NEXTAUTH_URL || 'http://localhost:3000').hostname;
+
 const authOptions: AuthOptions = {
   providers: [
     CredentialsProvider({
@@ -70,6 +75,18 @@ const authOptions: AuthOptions = {
   session: {
     strategy: "jwt" as const,
     maxAge: 60 * 60 * 24 * 7, // 7 days
+  },
+  cookies: {
+    sessionToken: {
+      name: `${cookiePrefix}next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax', // CSRF protection
+        path: '/',
+        secure: useSecureCookies,
+        domain: hostName === 'localhost' ? undefined : '.' + hostName // Include subdomains for production
+      }
+    }
   },
   callbacks: {
     async jwt({ token, user }: { token: CustomToken; user?: any }) {
