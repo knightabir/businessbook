@@ -1,6 +1,5 @@
 import NextAuth, { AuthOptions, Session, User as NextAuthUser } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import type { NextApiRequest, NextApiResponse } from "next";
 import connectDB from "@/lib/db";
 import bcrypt from "bcryptjs";
 import User from "@/models/User";
@@ -33,10 +32,24 @@ interface CustomSession extends Session {
   };
 }
 
-// Define cookie settings for different environments
-const useSecureCookies = process.env.NEXTAUTH_URL?.startsWith('https://') ?? false;
+// Fix: Use correct domain and secure cookie settings for Vercel/live server
+const NEXTAUTH_URL = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+const useSecureCookies = NEXTAUTH_URL.startsWith('https://');
 const cookiePrefix = useSecureCookies ? '__Secure-' : '';
-const hostName = new URL(process.env.NEXTAUTH_URL || 'http://localhost:3000').hostname;
+const hostName = new URL(NEXTAUTH_URL).hostname;
+
+// On Vercel, do not set domain for cookies if using preview deployments (e.g. vercel.app subdomains)
+function getCookieDomain(host: string) {
+  // Don't set domain for localhost or vercel.app preview domains
+  if (
+    host === "localhost" ||
+    host.endsWith(".vercel.app") ||
+    /^[0-9.]+$/.test(host) // IP address
+  ) {
+    return undefined;
+  }
+  return "." + host;
+}
 
 const authOptions: AuthOptions = {
   providers: [
@@ -56,7 +69,7 @@ const authOptions: AuthOptions = {
           const { email, password } = credentials ?? {};
           if (!email || !password)
             throw new Error("Email and password are required.");
-          const user = await User.findOne({ email }).select("+password +role");
+          const user = await User.findOne({ email }).select("+password +role +firstName +lastName");
           if (!user) throw new Error("Invalid email or password.");
           const isMatch = await bcrypt.compare(password, user.password);
           if (!isMatch) throw new Error("Invalid email or password.");
@@ -73,7 +86,7 @@ const authOptions: AuthOptions = {
     }),
   ],
   session: {
-    strategy: "jwt" as const,
+    strategy: "jwt",
     maxAge: 60 * 60 * 24 * 7, // 7 days
   },
   cookies: {
@@ -81,10 +94,10 @@ const authOptions: AuthOptions = {
       name: `${cookiePrefix}next-auth.session-token`,
       options: {
         httpOnly: true,
-        sameSite: 'lax', // CSRF protection
+        sameSite: 'lax',
         path: '/',
         secure: useSecureCookies,
-        domain: hostName === 'localhost' ? undefined : '.' + hostName // Include subdomains for production
+        domain: getCookieDomain(hostName),
       }
     }
   },
@@ -93,11 +106,12 @@ const authOptions: AuthOptions = {
       if (user) {
         token.role = user.role;
         token.id = user.id;
+        token.name = user.name;
+        token.email = user.email;
       }
       return token;
     },
     async session({ session, token }: { session: any; token: any }) {
-      // Ensure session.user exists
       session.user = session.user || {};
       if (token) {
         session.user.role = token.role;
@@ -105,7 +119,6 @@ const authOptions: AuthOptions = {
         session.user.name = token.name ?? session.user.name;
         session.user.email = token.email ?? session.user.email;
       }
-      return session;
       return session;
     },
     async signIn({
