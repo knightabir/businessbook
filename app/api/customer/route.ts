@@ -8,11 +8,11 @@ import Store from "@/models/Store";
 import Products from "@/models/Products";
 import Sale from "@/models/Sale";
 
+// Only allow actions on customers belonging to the user's store
+
 export async function POST(request: Request) {
     try {
-        const { name, phone, address } = await request.json();
         await connectDB();
-
         const session: any = await getServerSession(authOptions);
         if (!session || !session.user) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -21,15 +21,22 @@ export async function POST(request: Request) {
         if (!user) {
             return NextResponse.json({ error: "User not found" }, { status: 404 });
         }
+        const store = await Store.findOne({ userId: user._id });
+        if (!store) {
+            return NextResponse.json({ error: "Store not found" }, { status: 404 });
+        }
+
+        const { name, phone, address } = await request.json();
         if (!name || !phone || !address) {
             return NextResponse.json({ error: "All fields are required" }, { status: 400 });
         }
-        const store = await Store.findOne({ userId: user._id });
+
+        // Only allow creating customer for this user's store
         const customer = new Customer({
             name,
             phone,
             address,
-            storeId: store ? store._id : null,
+            storeId: store._id,
         });
         await customer.save();
 
@@ -43,12 +50,30 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
     try {
         await connectDB();
+        const session: any = await getServerSession(authOptions);
+        if (!session || !session.user) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const user = await User.findById(session.user.id);
+        if (!user) {
+            return NextResponse.json({ error: "User not found" }, { status: 404 });
+        }
+        const store = await Store.findOne({ userId: user._id });
+        if (!store) {
+            return NextResponse.json({ error: "Store not found" }, { status: 404 });
+        }
+
         const searchParams = new URL(request.url).searchParams;
         const id = searchParams.get('id');
+        if (!id) {
+            return NextResponse.json({ error: "Customer ID is required" }, { status: 400 });
+        }
         const { name, phone, address } = await request.json();
-        const customer = await Customer.findById(id);
+
+        // Only allow updating customer belonging to this store
+        const customer = await Customer.findOne({ _id: id, storeId: store._id });
         if (!customer) {
-            return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+            return NextResponse.json({ error: "Customer not found or not in your store" }, { status: 404 });
         }
         customer.name = name;
         customer.phone = phone;
@@ -64,18 +89,35 @@ export async function PUT(request: Request) {
 export async function DELETE(request: Request) {
     try {
         await connectDB();
-        const searchParams = new URL(request.url).searchParams;
+        const session: any = await getServerSession(authOptions);
+        if (!session || !session.user) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const user = await User.findById(session.user.id);
+        if (!user) {
+            return NextResponse.json({ error: "User not found" }, { status: 404 });
+        }
+        const store = await Store.findOne({ userId: user._id });
+        if (!store) {
+            return NextResponse.json({ error: "Store not found" }, { status: 404 });
+        }
+
+        const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
         if (!id) {
             return NextResponse.json({ error: "Please provide the ID" }, { status: 400 });
         }
 
-        const customer = await Customer.findById(id);
+        // Only allow deleting customer belonging to this store
+        const customer = await Customer.findOne({ _id: id, storeId: store._id });
         if (!customer) {
-            return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+            return NextResponse.json({ error: "Customer not found or not in your store" }, { status: 404 });
         }
 
-        await Customer.deleteOne({ _id: id });
+        // Delete all the sales records of that customer. If no record found, that's fine.
+        await Sale.deleteMany({ customerId: customer._id });
+
+        await Customer.deleteOne({ _id: customer._id });
 
         return NextResponse.json({ message: "Customer deleted successfully" });
     } catch (error) {
@@ -89,13 +131,26 @@ export async function DELETE(request: Request) {
 export async function GET(request: Request) {
     try {
         await connectDB();
+        const session: any = await getServerSession(authOptions);
+        if (!session || !session.user) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        console.log(session.user.id);
+        const user = await User.findById(session.user.id);
+        if (!user) {
+            return NextResponse.json({ error: "User not found" }, { status: 404 });
+        }
+        const store = await Store.findOne({ userId: user._id });
+        if (!store) {
+            return NextResponse.json({ error: "Store not found" }, { status: 404 });
+        }
 
         // Support search by name or phone via query params
         const { searchParams } = new URL(request.url);
         const search = searchParams.get("search")?.trim();
 
         // Build aggregation pipeline
-        const matchStage: any = {};
+        const matchStage: any = { storeId: store._id };
         if (search) {
             matchStage.$or = [
                 { name: { $regex: search, $options: "i" } },
@@ -106,9 +161,7 @@ export async function GET(request: Request) {
         // Aggregation pipeline
         const pipeline: any[] = [];
 
-        if (Object.keys(matchStage).length > 0) {
-            pipeline.push({ $match: matchStage });
-        }
+        pipeline.push({ $match: matchStage });
 
         pipeline.push(
             {

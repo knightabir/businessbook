@@ -161,7 +161,7 @@ export default function CustomersPage() {
   // Delete customer via API
   const handleDeleteCustomer = async (customerId: string) => {
     try {
-      const response = await fetch(`/api/customer/${customerId}`, {
+      const response = await fetch(`/api/customer?id=${customerId}`, {
         method: "DELETE",
       });
       if (!response.ok) throw new Error("Failed to delete customer");
